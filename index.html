@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OBS Steuerung (Echtzeit)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #1a1a1a; color: #f9fafb; }
+        .card { background-color: #282828; border-radius: 0.5rem; box-shadow: 0 5px 10px rgba(0, 0, 0, 0.5); }
+        input, select, button, textarea { background-color: #383838; border: 1px solid #4a4a4a; color: #f9fafb; transition: all 0.1s ease; }
+        
+        /* Preview/Control Styling */
+        .preview-item {
+            position: absolute;
+            box-sizing: border-box;
+            word-wrap: break-word;
+            font-family: 'Inter', sans-serif;
+            opacity: 0.9;
+        }
+        .draggable { cursor: grab; }
+        .resizer {
+            width: 15px;
+            height: 15px;
+            background: #3b82f6;
+            position: absolute;
+            right: -7px;
+            bottom: -7px;
+            border-radius: 4px;
+            cursor: nwse-resize;
+            border: 2px solid white;
+        }
+
+        /* OBS-like Source List */
+        .source-list-container {
+            min-height: 200px;
+            border: 1px solid #383838;
+            background-color: #1f1f1f;
+        }
+        .source-list-item {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            border-bottom: 1px solid #383838;
+            cursor: pointer;
+        }
+        .source-list-item:hover {
+            background-color: #282828;
+        }
+        .source-list-item.selected {
+            background-color: #3a4a58; 
+            border-left: 3px solid #3b82f6;
+        }
+        .source-type-icon {
+            margin-right: 10px;
+            width: 20px;
+            height: 20px;
+        }
+        
+        .preview-text-content {
+            white-space: pre-wrap;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+        }
+        
+        /* Modal Message Box */
+        #messageBox {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out;
+        }
+        #messageBox.active {
+            opacity: 1;
+        }
+
+    </style>
+</head>
+<body>
+    
+    <div id="messageBox" class="bg-blue-600 text-white font-semibold"></div>
+
+    <div class="min-h-screen p-6 flex flex-col gap-6">
+
+        <h1 class="text-4xl font-extrabold text-blue-400">OBS-Quellensteuerung</h1>
+
+        <!-- Status Message (Error only) -->
+        <div id="statusMessage" class="p-3 bg-red-600 text-white rounded font-semibold text-sm hidden">
+            FEHLER BEIM VERBINDEN/AUTH: Fehler: Firebase-Konfiguration oder API-Schlüssel fehlt.. Ist die Konfiguration gültig?
+        </div>
+
+        <div class="flex flex-col lg:flex-row gap-6">
+            
+            <!-- LEFT AREA: PREVIEW & SOURCE LIST -->
+            <div class="lg:w-1/2 space-y-6">
+                <!-- PREVIEW (16:9 Aspect Ratio) -->
+                <h2 class="text-xl font-semibold text-blue-300">Vorschau (16:9)</h2>
+                <div id="previewContainer" class="card relative w-full aspect-video border-4 border-gray-600 overflow-hidden select-none">
+                    <p id="previewPlaceholder" class="absolute inset-0 flex items-center justify-center text-gray-400 text-lg pointer-events-none">Ziehen & Skalieren Sie die Elemente</p>
+                </div>
+                
+                <!-- SOURCE LIST (Layer Management) -->
+                <div class="space-y-3">
+                    <h2 class="text-xl font-semibold">Quellenliste</h2>
+                    <div id="sourceListContainer" class="source-list-container rounded-lg overflow-y-auto">
+                        <div id="sourceList">
+                            <!-- Sources will be injected here -->
+                        </div>
+                    </div>
+                    
+                    <!-- OBS-like Control Buttons -->
+                    <div class="flex items-center space-x-2 p-2 bg-gray-700 rounded-lg">
+                        <button onclick="openAddSourceModal()" class="text-white hover:text-green-400 p-1 rounded transition duration-200" title="Quelle hinzufügen">
+                            <!-- Plus-Icon -->
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                        </button>
+                        <button onclick="deleteSelectedSource()" class="text-white hover:text-red-400 p-1 rounded transition duration-200" title="Ausgewählte Quelle löschen">
+                            <!-- Minus-Icon -->
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path></svg>
+                        </button>
+                        <div class="flex-grow"></div>
+                        <button onclick="changeLayerOrder(-1)" class="text-white hover:text-gray-400 p-1 rounded transition duration-200" title="Quelle nach hinten verschieben">
+                            <!-- Pfeil-Runter (Layer back) -->
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                        </button>
+                        <button onclick="changeLayerOrder(1)" class="text-white hover:text-gray-400 p-1 rounded transition duration-200" title="Quelle nach vorne verschieben">
+                            <!-- Pfeil-Hoch (Layer front) -->
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT AREA: SETTINGS -->
+            <div class="lg:w-1/2">
+                <h2 class="text-xl font-semibold mb-3">Quellen-Eigenschaften</h2>
+                <div id="settingsPanel" class="card p-4 min-h-[400px]">
+                    <p class="text-gray-400">Wählen Sie eine Quelle aus der Liste, um sie zu konfigurieren.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL FOR NEW SOURCE -->
+    <div id="addSourceModal" class="fixed inset-0 bg-black bg-opacity-70 hidden items-center justify-center p-4 z-50">
+        <div class="card w-full max-w-lg p-6 space-y-4">
+            <h3 class="text-2xl font-bold">Neue Quelle hinzufügen</h3>
+            
+            <div>
+                <label class="block text-sm font-medium mb-1">Quelltyp</label>
+                <select id="newSourceType" class="w-full p-2 rounded" onchange="updateModalInput()">
+                    <option value="text">Text</option>
+                    <option value="media">Medien (Bild/Video URL)</option>
+                    <option value="timer">Timer (Countdown/Countup)</option>
+                    <option value="browser">Browserquelle (URL)</option>
+                </select>
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium mb-1" id="newSourceLabel">Textinhalt</label>
+                <input type="text" id="newSourceContent" placeholder="Inhalt eingeben..." class="w-full p-2 rounded">
+                <p id="browserUrlWarning" class="text-xs text-red-400 mt-1 hidden">Wichtig: Seiten wie Google, YouTube oder Twitch können aufgrund von Sicherheitsbeschränkungen (X-Frame-Options/CORS) nicht geladen werden. Verwenden Sie nur URLs von Widgets oder Seiten ohne diese Blockade.</p>
+            </div>
+            
+            <div class="flex justify-end space-x-3">
+                <button onclick="closeAddSourceModal()" class="py-2 px-4 rounded font-bold bg-gray-600 hover:bg-gray-500">Abbrechen</button>
+                <button onclick="addSource()" class="py-2 px-4 rounded font-bold bg-green-600 hover:bg-green-700">Hinzufügen</button>
+            </div>
+        </div>
+    </div>
+
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Enable Firestore debugging
+        setLogLevel('debug');
+
+        // --- HARDCODED CONFIG FOR EXTERNAL SERVER ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyCfam-57aK-bqyeyK1t-uAIriBcO4MzAlw",
+            authDomain: "obs-sources.firebaseapp.com",
+            projectId: "obs-sources",
+            storageBucket: "obs-sources.firebasestorage.app",
+            messagingSenderId: "237195798184",
+            appId: "1:237195798184:web:5dfc432b70c3377b74849d",
+        };
+        
+        // --- Global Variables ---
+        let db, auth, userId;
+        let sources = []; 
+        let nextId = 1;
+        let selectedSourceId = null;
+
+        const statusMessage = document.getElementById('statusMessage');
+        const previewContainer = document.getElementById('previewContainer');
+        const addSourceModal = document.getElementById('addSourceModal');
+        const previewPlaceholder = document.getElementById('previewPlaceholder');
+        const messageBox = document.getElementById('messageBox');
+        
+        // CONSTANT PATH for Firestore (based on projectId "obs-sources")
+        const DB_PATH = `artifacts/obs-sources/public/data/obs_state`;
+        const DOC_ID = 'live_config';
+
+
+        // --- UI Helpers: Non-blocking Messages ---
+        function showMessage(text, isError = false) {
+            messageBox.textContent = text;
+            messageBox.className = isError 
+                ? 'active bg-red-600 text-white font-semibold' 
+                : 'active bg-blue-600 text-white font-semibold';
+            
+            setTimeout(() => {
+                messageBox.classList.remove('active');
+            }, 3000);
+        }
+        
+        // --- UI Helpers: Creates action buttons for the list ---
+        function createActionButton(isActive, dPathActive, dPathInactive, colorClass, action) {
+            const btn = document.createElement('button');
+            btn.className = `p-1 rounded transition duration-200 ${colorClass} hover:opacity-75`;
+            btn.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${isActive ? dPathActive : dPathInactive}"></path></svg>`;
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                action();
+            };
+            return btn;
+        }
+
+        // --- Firebase Initialization ---
+        
+        async function initFirebase() {
+            try {
+                if (!firebaseConfig.apiKey) {
+                    throw new Error("Fehler: Firebase-Konfiguration oder API-Schlüssel fehlt.");
+                }
+
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // EXTERNAL: Sign in anonymously
+                const userCredential = await signInAnonymously(auth);
+                
+                userId = userCredential.user?.uid || 'anonymous';
+                startRealtimeListener();
+                
+                statusMessage.classList.add('hidden'); // Connected successfully
+                showMessage("Erfolgreich mit Firebase verbunden.");
+
+            } catch (error) {
+                console.error("Firebase Initialisierungsfehler:", error);
+                statusMessage.textContent = `FEHLER BEIM VERBINDEN/AUTH: ${error.message}. Überprüfen Sie Ihre Firebase-Regeln (Anonyme Anmeldung muss erlaubt sein) und den API-Schlüssel.`;
+                statusMessage.classList.remove('hidden');
+            }
+        }
+
+        // --- Data Persistence (Firestore) ---
+
+        /** Writes the current state (sources Array) to Firestore. */
+        async function saveStateToFirestore() {
+            if (!db) return;
+            // 1. Ensure order values are dense and sequential
+            sources.forEach((s, index) => s.order = index);
+            
+            // 2. Create a clean copy to save
+            const stateToSave = {
+                sources: sources.map(s => {
+                    // Remove temporary UI properties
+                    const { isDragging, isResizing, ...cleanSource } = s;
+                    return cleanSource;
+                }),
+                nextId: nextId,
+                updatedBy: userId,
+                timestamp: Date.now()
+            };
+
+            try {
+                // Use debounce for frequent updates (like dragging/resizing)
+                await setDoc(doc(db, DB_PATH, DOC_ID), stateToSave);
+            } catch (e) {
+                console.error("Fehler beim Speichern in Firestore:", e);
+                showMessage(`Fehler beim Speichern: ${e.message}`, true);
+            }
+        }
+        
+        // Debounce function to limit Firestore writes during dragging/resizing
+        let saveTimeout;
+        window.debouncedSave = function() {
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(() => {
+                saveStateToFirestore();
+            }, 50); // Save after 50ms of inactivity
+        };
+
+        /** Starts the real-time listener for the configuration. */
+        function startRealtimeListener() {
+            const docRef = doc(db, DB_PATH, DOC_ID);
+
+            onSnapshot(docRef, (docSnapshot) => {
+                if (docSnapshot.exists()) {
+                    const state = docSnapshot.data();
+                    sources = state.sources || [];
+                    nextId = state.nextId || 1; 
+                    // Sort sources by 'order' for correct layer order
+                    sources.sort((a, b) => a.order - b.order); 
+                } else {
+                    sources = [];
+                    nextId = 1;
+                }
+                
+                // Rerender all
+                renderAll(); 
+            }, (error) => {
+                console.error("Fehler beim Abrufen des Echtzeit-Zustands:", error);
+                statusMessage.textContent = `FEHLER beim Laden des Zustands: ${error.message}`;
+                statusMessage.classList.remove('hidden');
+            });
+        }
+
+        // --- CRUD Operations and Modal ---
+
+        /** Opens the add source modal. */
+        window.openAddSourceModal = function() {
+            addSourceModal.classList.remove('hidden');
+            addSourceModal.classList.add('flex');
+            updateModalInput(); 
+        }
+
+        /** Closes the add source modal. */
+        window.closeAddSourceModal = function() {
+            addSourceModal.classList.add('hidden');
+            addSourceModal.classList.remove('flex');
+        }
+
+        /** Updates the placeholder text for the new source input in the modal */
+        window.updateModalInput = function() {
+            const type = document.getElementById('newSourceType').value;
+            const input = document.getElementById('newSourceContent');
+            const label = document.getElementById('newSourceLabel');
+            const warning = document.getElementById('browserUrlWarning');
+            input.value = '';
+            
+            warning.classList.add('hidden');
+
+            switch(type) {
+                case 'text':
+                    label.textContent = 'Textinhalt';
+                    input.placeholder = 'Inhalt des Textes (z.B. "Starting Soon")';
+                    break;
+                case 'media':
+                    label.textContent = 'Medien URL';
+                    input.placeholder = 'Bild- oder Video-URL (z.B. .png, .mp4)';
+                    break;
+                case 'timer':
+                    label.textContent = 'Startzeit';
+                    input.placeholder = 'Startwert für Countdown (z.B. 00:05:00)';
+                    break;
+                case 'browser':
+                    label.textContent = 'Webseite URL';
+                    input.placeholder = 'Verwenden Sie URLs, die in iFrames erlaubt sind (z.B. https://example.com)';
+                    warning.classList.remove('hidden');
+                    break;
+            }
+        }
+
+        /** Formats a time string to seconds. */
+        function parseTimeToSeconds(timeString) {
+            const parts = timeString.split(':').map(Number).reverse(); // [ss, mm, hh]
+            let seconds = 0;
+            if (parts[0] !== undefined) seconds += parts[0];
+            if (parts[1] !== undefined) seconds += parts[1] * 60;
+            if (parts[2] !== undefined) seconds += parts[2] * 3600;
+            return seconds;
+        }
+
+
+        /** Adds a new source to the state. */
+        window.addSource = function() {
+            const type = document.getElementById('newSourceType').value;
+            const content = document.getElementById('newSourceContent').value.trim();
+
+            if (!content) {
+                showMessage('Bitte geben Sie einen Inhalt ein.', true);
+                return;
+            }
+
+            let newSource = {
+                id: nextId++,
+                type: type,
+                content: content,
+                x: 10,
+                y: 10,
+                w: 30,
+                h: 15,
+                s: 1.0, 
+                visible: true,
+                locked: false,
+                order: sources.length 
+            };
+            
+            // Specific Initialization
+            if (type === 'text' || type === 'timer') {
+                newSource.color = '#ffffff';
+                newSource.size = 2.0;
+                // Default: Transparent. bgAlpha controls visibility
+                newSource.bgColor = '#000000'; 
+                newSource.bgAlpha = 0.0;
+                newSource.textAlign = 'center';
+
+                if (type === 'timer') {
+                    const duration = parseTimeToSeconds(content);
+                    if (isNaN(duration) || duration <= 0) {
+                         showMessage("Ungültiges Zeitformat für Timer. Verwenden Sie HH:MM:SS und stellen Sie sicher, dass die Dauer größer als Null ist.", true);
+                         return;
+                    }
+                    newSource.content = 'TIMER'; 
+                    newSource.initialDuration = duration;
+                    newSource.timerMode = 'countdown'; 
+                    newSource.isRunning = false; 
+                    newSource.startTime = 0;
+                    newSource.color = '#ffcc00';
+                    newSource.size = 5.0;
+                    newSource.w = 50;
+                    newSource.h = 20;
+                    newSource.bgAlpha = 0.7; // Default for Timer
+                }
+            } else if (type === 'media') {
+                newSource.w = 40;
+                newSource.h = 40;
+            } else if (type === 'browser') {
+                 newSource.w = 60;
+                 newSource.h = 60;
+            }
+
+            sources.push(newSource);
+            selectedSourceId = newSource.id; 
+            closeAddSourceModal();
+            showMessage('Quelle hinzugefügt: ' + (newSource.content.substring(0, 15) || newSource.type));
+            saveStateToFirestore(); 
+        }
+
+        /** Deletes the selected source. */
+        window.deleteSelectedSource = function() {
+            if (!selectedSourceId) {
+                showMessage('Bitte wähle zuerst eine Quelle aus der Liste aus.', true);
+                return;
+            }
+
+            if (!window.confirm('Möchtest du diese Quelle wirklich löschen?')) return; 
+            
+            sources = sources.filter(s => s.id !== selectedSourceId);
+            selectedSourceId = null;
+            
+            showMessage('Quelle gelöscht.');
+            saveStateToFirestore(); 
+        }
+
+        /** Controls the layer order (Z-index) of the selected source. */
+        window.changeLayerOrder = function(direction) {
+            if (!selectedSourceId) return;
+            
+            const index = sources.findIndex(s => s.id === selectedSourceId);
+            if (index === -1) return;
+
+            const newIndex = index + direction; 
+            
+            if (newIndex < 0 || newIndex >= sources.length) {
+                 showMessage('Kann Layer nicht weiter verschieben.', true);
+                 return;
+            }
+
+            [sources[index], sources[newIndex]] = [sources[newIndex], sources[index]];
+            
+            // Save with new order
+            saveStateToFirestore(); 
+        }
+
+
+        // --- Helper Functions for Settings Panel ---
+
+        /** Updates an attribute of a source and saves the state. */
+        window.updateSource = function(id, key, value) {
+            const source = sources.find(s => s.id === id);
+            if (source) {
+                // Type conversion
+                if (key === 'size' || key === 's' || key === 'x' || key === 'y' || key === 'w' || key === 'h' || key === 'bgAlpha') value = parseFloat(value);
+                if (key === 'order' || key === 'initialDuration') value = parseInt(value);
+                
+                // Logic for Timer Control
+                if (key === 'startStopTimer') {
+                    if (source.isRunning) {
+                        source.isRunning = false; // Pause
+                    } else {
+                        if (source.timerMode === 'countdown' && source.initialDuration <= 0) {
+                            showMessage("Countdown-Timer kann nicht gestartet werden, da die Dauer Null ist.", true);
+                            return;
+                        }
+                        source.isRunning = true;
+                        source.startTime = Date.now(); 
+                    }
+                    key = 'isRunning'; 
+                    value = source.isRunning;
+                }
+                
+                source[key] = value;
+                
+                // Immediate UI update (Settings and Preview)
+                renderSettingsPanel(source);
+                renderPreview();
+
+                // Save asynchronously
+                debouncedSave(); 
+            }
+        }
+
+        /** Resets a timer. */
+        window.resetTimer = function(id) {
+            const source = sources.find(s => s.id === id);
+            if (source && source.type === 'timer') {
+                source.isRunning = false;
+                source.startTime = 0;
+                source.elapsedTime = 0; 
+                showMessage('Timer zurückgesetzt.');
+                saveStateToFirestore();
+            }
+        }
+
+        /** Toggles the visibility of a source. */
+        window.toggleVisibility = function(id) {
+            const source = sources.find(s => s.id === id);
+            if (source) {
+                source.visible = !source.visible;
+                showMessage(source.visible ? 'Quelle sichtbar.' : 'Quelle ausgeblendet.');
+                saveStateToFirestore(); 
+            }
+        }
+
+        /** Toggles the lock state of a source. */
+        window.toggleLock = function(id) {
+            const source = sources.find(s => s.id === id);
+            if (source) {
+                source.locked = !source.locked;
+                showMessage(source.locked ? 'Quelle gesperrt.' : 'Quelle entsperrt.');
+                saveStateToFirestore(); 
+            }
+        }
+        
+        /** Converts HEX color and Alpha value to RGBA string. */
+        function hexToRgba(hex, alpha) {
+            const r = parseInt(hex.substring(1, 3), 16);
+            const g = parseInt(hex.substring(3, 5), 16);
+            const b = parseInt(hex.substring(5, 7), 16);
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+
+        // --- Rendering ---
+
+        /** Renders the entire source list and preview. */
+        function renderAll() {
+            renderSourceList();
+            renderPreview();
+        }
+
+        /** Renders the interactive preview. */
+        function renderPreview() {
+            previewContainer.innerHTML = '';
+            const previewRect = previewContainer.getBoundingClientRect();
+            
+            if (sources.length === 0) {
+                 previewPlaceholder.classList.remove('hidden');
+            } else {
+                 previewPlaceholder.classList.add('hidden');
+            }
+
+            const currentSource = sources.find(s => s.id === selectedSourceId);
+            renderSettingsPanel(currentSource);
+
+
+            [...sources].sort((a, b) => a.order - b.order).forEach(source => {
+                const el = document.createElement('div');
+                el.id = `preview-item-${source.id}`;
+                
+                let classList = 'preview-item absolute p-2 rounded shadow-xl border-2 ';
+
+                if (!source.visible) {
+                    classList += 'opacity-10 border-dashed border-red-500 ';
+                } else {
+                    classList += 'border-transparent ';
+                }
+
+                if (source.id === selectedSourceId) {
+                    classList += 'border-blue-400 ring-4 ring-blue-400/50 ';
+                } else if (!source.locked) {
+                    classList += 'hover:border-yellow-400 ';
+                }
+                
+                if (source.locked) {
+                    classList += 'cursor-default opacity-80 ';
+                } else {
+                    classList += 'draggable ';
+                }
+
+                el.className = classList;
+                
+                // Styling and Positioning
+                el.style.left = `${source.x}%`;
+                el.style.top = `${source.y}%`;
+                el.style.width = `${source.w}%`;
+                el.style.height = `${source.h}%`;
+                el.style.zIndex = source.order;
+                el.style.transform = `scale(${source.s})`;
+                el.style.transformOrigin = 'top left';
+
+
+                // Content for the preview
+                if (source.type === 'text' || source.type === 'timer') {
+                    const content = source.type === 'timer' ? 'TIMER' : source.content; 
+                    const bgColorRgba = hexToRgba(source.bgColor || '#000000', source.bgAlpha || 0.0);
+                    
+                    el.innerHTML = `<div class="preview-text-content" style="color: ${source.color || 'white'}; font-size: ${source.size || 2}rem; background-color: ${bgColorRgba}; text-align: ${source.textAlign || 'center'};">${content}</div>`;
+                    el.style.padding = '0';
+                    el.style.backgroundColor = 'transparent'; 
+                } else if (source.type === 'media') {
+                    const mediaTag = source.content.toLowerCase().match(/\.(mp4|webm|ogg|mov)$/i) ? 'video' : 'img';
+                    el.innerHTML = `<${mediaTag} src="${source.content}" class="w-full h-full object-contain" style="background-color: transparent; pointer-events: none;" onerror="this.src='https://placehold.co/200x100/FF0000/FFFFFF?text=URL+FEHLER'"></${mediaTag}>`;
+                    el.style.padding = '0';
+                    el.style.backgroundColor = 'transparent';
+                } else if (source.type === 'browser') {
+                    // Browser source placeholder: Prevents CORS errors in the controller's iframe
+                    el.innerHTML = `<div class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70 pointer-events-none text-white font-bold text-center p-2">BROWSER QUELLE<br>(${source.content.substring(0, 30)}...)<br><span class="text-sm text-yellow-300">Wird im OBS-Display geladen (CORS-Check übersprungen).</span></div>`;
+                    el.style.padding = '0';
+                    el.style.backgroundColor = '#1f2937';
+                }
+                
+                // Add Resizer and Dragging Logic
+                if (!source.locked) {
+                    makeDraggable(el, source, previewRect);
+                    
+                    if (source.id === selectedSourceId) {
+                        const resizer = document.createElement('div');
+                        resizer.className = 'resizer';
+                        el.appendChild(resizer);
+                        makeResizable(resizer, source, previewRect);
+                    }
+                }
+                
+                el.onclick = (e) => {
+                    e.stopPropagation();
+                    selectedSourceId = source.id;
+                    renderAll(); 
+                };
+
+                previewContainer.appendChild(el);
+            });
+            
+            previewContainer.onclick = () => {
+                selectedSourceId = null;
+                renderAll(); 
+            };
+        }
+        
+        /** Renders the source list (layer management). */
+        function renderSourceList() {
+            const list = document.getElementById('sourceList');
+            list.innerHTML = '';
+            
+            // Sort by Z-Index: Highest order (highest Z-index) first in the list
+            [...sources].sort((a, b) => b.order - a.order).forEach(source => {
+                const item = document.createElement('div');
+                item.className = `source-list-item ${source.id === selectedSourceId ? 'selected' : ''}`;
+                
+                item.onclick = (e) => { 
+                    e.stopPropagation();
+                    selectedSourceId = source.id;
+                    renderAll(); 
+                };
+                
+                const typeMap = {
+                    text: { icon: 'T', name: 'Text', style: 'font-weight: bold;' },
+                    media: { icon: '🎬', name: 'Medien', style: '' },
+                    timer: { icon: '⏱️', name: 'Timer', style: '' },
+                    browser: { icon: '🌐', name: 'Browser', style: '' }
+                };
+                const typeInfo = typeMap[source.type] || { icon: '?', name: 'Unbekannt', style: '' };
+
+                // Left part: Icon and Name
+                const nameContent = document.createElement('div');
+                nameContent.className = 'flex-grow flex items-center truncate';
+                nameContent.innerHTML = `
+                    <span class="source-type-icon text-lg" style="${typeInfo.style}">${typeInfo.icon}</span>
+                    <span class="${source.visible ? '' : 'text-gray-500 line-through'}">${typeInfo.name}: ${source.content.substring(0, 30)}</span>
+                `;
+
+                // Right part: Visibility and Lock Icons
+                const actions = document.createElement('div');
+                actions.className = 'flex space-x-2';
+
+                const visibilityBtn = createActionButton(
+                    source.visible, 
+                    'M15 12a3 3 0 11-6 0 3 3 0 016 0z', 
+                    'M13.879 10.428A10.435 10.435 0 0112 15c-4.062 0-7.447-2.684-9.337-6.072a1.5 1.5 0 010-1.856C4.553 4.684 7.938 2 12 2c.682 0 1.343.084 1.98.243', 
+                    source.visible ? 'text-green-400' : 'text-red-400',
+                    () => toggleVisibility(source.id)
+                );
+                
+                const lockBtn = createActionButton(
+                    source.locked,
+                    'M12 15v2m-6 4h12a2 2 0 002-2v-4a2 2 0 00-2-2H6a2 2 0 00-2 2v4a2 2 0 002 2zm-3-8h18a1 1 0 011 1v2a1 1 0 01-1 1H3a1 1 0 01-1-1v-2a1 1 0 011-1z', 
+                    'M10 12V7a2 2 0 014 0v5m-4 0h4m-4 0v7a2 2 0 002 2h4a2 2 0 002-2v-7',
+                    source.locked ? 'text-yellow-400' : 'text-gray-400',
+                    () => toggleLock(source.id)
+                );
+
+                actions.appendChild(visibilityBtn);
+                actions.appendChild(lockBtn);
+
+                item.appendChild(nameContent);
+                item.appendChild(actions);
+                list.appendChild(item);
+            });
+        }
+        
+        /** Renders the settings panel for the selected source. */
+        function renderSettingsPanel(source) {
+            const panel = document.getElementById('settingsPanel');
+            let settingsHtml = '';
+            
+            if (source) {
+                // --- Timer Control ---
+                let timerControls = '';
+                if (source.type === 'timer') {
+                    const durationSeconds = source.initialDuration || 0;
+                    const h = Math.floor(durationSeconds / 3600);
+                    const m = Math.floor((durationSeconds % 3600) / 60);
+                    const s = Math.floor(durationSeconds % 60);
+                    const initialTimeFormatted = [String(h).padStart(2, '0'), String(m).padStart(2, '0'), String(s).padStart(2, '0')].join(':');
+
+                    timerControls = `
+                        <div class="space-y-3 p-4 bg-gray-700 rounded-lg">
+                            <h3 class="text-lg font-bold text-yellow-300">Timer Steuerung</h3>
+
+                            <div class="flex space-x-2">
+                                <button onclick="updateSource(${source.id}, 'startStopTimer', true)" class="flex-1 py-2 px-4 rounded font-bold ${source.isRunning ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'}">
+                                    ${source.isRunning ? 'PAUSE' : 'START'}
+                                </button>
+                                <button onclick="resetTimer(${source.id})" class="flex-1 py-2 px-4 rounded font-bold bg-red-600 hover:bg-red-700">
+                                    RESET
+                                </button>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium mb-1">Startzeit (HH:MM:SS)</label>
+                                <input type="text" value="${initialTimeFormatted}" onchange="updateSource(${source.id}, 'initialDuration', parseTimeToSeconds(this.value));" class="w-full p-2 rounded">
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium mb-1">Modus</label>
+                                <select onchange="updateSource(${source.id}, 'timerMode', this.value)" class="w-full p-2 rounded">
+                                    <option value="countdown" ${source.timerMode === 'countdown' ? 'selected' : ''}>Countdown</option>
+                                    <option value="countup" ${source.timerMode === 'countup' ? 'selected' : ''}>Countup</option>
+                                </select>
+                            </div>
+                            <p class="text-xs text-gray-400">Hinweis: Die exakte verstrichene Zeit wird von der Anzeige-Quelle berechnet.</p>
+                        </div>
+                    `;
+                }
+
+                settingsHtml = `
+                    <div class="space-y-4">
+                        <h2 class="text-2xl font-semibold text-blue-300">${source.content.substring(0, 20) || 'Quelle'}</h2>
+
+                        ${timerControls}
+
+                        <!-- Edit Content (for Text, Media, Browser) -->
+                        ${source.type !== 'timer' ? `
+                            <h3 class="text-lg font-bold pt-2">Inhalt</h3>
+                            <div>
+                                <label class="block text-sm font-medium mb-1">${source.type === 'text' ? 'Textinhalt' : 'URL'}</label>
+                                <textarea onchange="updateSource(${source.id}, 'content', this.value);" class="w-full p-2 rounded text-black" rows="${source.type === 'text' ? 4 : 1}">${source.content}</textarea>
+                                ${source.type === 'browser' ? `
+                                    <p class="text-xs text-red-400 mt-1 font-bold">FEHLER-HINWEIS: Seiten wie Google oder YouTube können hier nicht geladen werden (Sicherheitsblockade/CORS). Testen Sie nur Seiten, die Sie auch in OBS als Browserquelle verwenden würden.</p>
+                                ` : ''}
+                            </div>
+                        ` : ''}
+
+                        <!-- General Settings (Position & Size) -->
+                        <h3 class="text-lg font-bold pt-2">Transformation (Prozent der 16:9-Leinwand)</h3>
+                        <div class="space-y-2">
+                            <div class="flex space-x-4">
+                                <div class="w-1/2">
+                                    <label class="block text-sm font-medium mb-1">Position X (%): ${source.x.toFixed(1)}</label>
+                                    <input type="range" min="-50" max="150" step="0.1" value="${source.x}" oninput="updateSource(${source.id}, 'x', parseFloat(this.value));" class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer">
+                                </div>
+                                <div class="w-1/2">
+                                    <label class="block text-sm font-medium mb-1">Position Y (%): ${source.y.toFixed(1)}</label>
+                                    <input type="range" min="-50" max="150" step="0.1" value="${source.y}" oninput="updateSource(${source.id}, 'y', parseFloat(this.value));" class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer">
+                                </div>
+                            </div>
+                            
+                            <div class="flex space-x-4">
+                                <div class="w-1/2">
+                                    <label class="block text-sm font-medium mb-1">Breite (%): ${source.w.toFixed(1)}</label>
+                                    <input type="range" min="1" max="100" step="0.1" value="${source.w}" oninput="updateSource(${source.id}, 'w', parseFloat(this.value));" class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer">
+                                </div>
+                                <div class="w-1/2">
+                                    <label class="block text-sm font-medium mb-1">Höhe (%): ${source.h.toFixed(1)}</label>
+                                    <input type="range" min="1" max="100" step="0.1" value="${source.h}" oninput="updateSource(${source.id}, 'h', parseFloat(this.value));" class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer">
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium mb-1">Skalierung: ${source.s.toFixed(2)}x (Layer-intern)</label>
+                                <input type="range" min="0.1" max="3.0" step="0.05" value="${source.s}" oninput="updateSource(${source.id}, 's', parseFloat(this.value));" class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer">
+                            </div>
+                        </div>
+
+
+                        <!-- Text and Timer specific -->
+                        ${source.type === 'text' || source.type === 'timer' ? `
+                            <h3 class="text-lg font-bold pt-2">Schrift & Farben</h3>
+                            <!-- Foreground Color -->
+                            <div class="flex space-x-4">
+                                <div class="w-1/2">
+                                    <label class="block text-sm font-medium mb-1">Vordergrundfarbe</label>
+                                    <input type="color" value="${source.color}" onchange="updateSource(${source.id}, 'color', this.value);" class="w-full h-10 p-1 rounded">
+                                </div>
+                                <div class="w-1/2">
+                                    <label class="block text-sm font-medium mb-1">Hintergrundfarbe (HEX)</label>
+                                    <input type="color" value="${source.bgColor || '#000000'}" onchange="updateSource(${source.id}, 'bgColor', this.value);" class="w-full h-10 p-1 rounded">
+                                </div>
+                            </div>
+
+                            <!-- Background Alpha Control -->
+                            <div>
+                                <label class="block text-sm font-medium mb-1">Hintergrund-Transparenz (Alpha): ${source.bgAlpha.toFixed(2)}</label>
+                                <input type="range" min="0.0" max="1.0" step="0.01" value="${source.bgAlpha}" oninput="updateSource(${source.id}, 'bgAlpha', parseFloat(this.value));" class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer">
+                            </div>
+
+                            <!-- Font Size -->
+                            <div>
+                                <label class="block text-sm font-medium mb-1">Schriftgröße (rem: ${source.size.toFixed(1)})</label>
+                                <input type="range" min="0.5" max="10.0" step="0.1" value="${source.size}" oninput="updateSource(${source.id}, 'size', parseFloat(this.value));" class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer">
+                            </div>
+                            
+                            <!-- Text Align only for Text -->
+                            ${source.type === 'text' ? `
+                                <div>
+                                    <label class="block text-sm font-medium mb-1">Textausrichtung</label>
+                                    <select onchange="updateSource(${source.id}, 'textAlign', this.value)" class="w-full p-2 rounded">
+                                        <option value="left" ${source.textAlign === 'left' ? 'selected' : ''}>Links</option>
+                                        <option value="center" ${source.textAlign === 'center' ? 'selected' : ''}>Zentriert</option>
+                                        <option value="right" ${source.textAlign === 'right' ? 'selected' : ''}>Rechts</option>
+                                    </select>
+                                </div>
+                            ` : ''}
+
+                        ` : ''}
+
+                    </div>
+                `;
+            } else {
+                 settingsHtml = `
+                    <div class="p-4 mt-0 text-gray-400">
+                        <p>Wählen Sie eine Quelle aus der Liste, um ihre spezifischen Einstellungen zu bearbeiten.</p>
+                    </div>
+                `;
+            }
+
+            panel.innerHTML = settingsHtml;
+        }
+
+
+        // --- Interaction Logic (Drag & Resize) ---
+
+        /** Implements the dragging logic (real-time movement). */
+        function makeDraggable(el, source, previewRect) {
+            let isDragging = false;
+            let startX, startY;
+            
+            const pxToPercentX = 100 / previewRect.width;
+            const pxToPercentY = 100 / previewRect.height;
+            
+            const onMouseDown = (e) => {
+                if (e.target.className.includes('resizer') || source.locked) return; 
+                isDragging = true;
+                el.style.cursor = 'grabbing';
+                startX = e.clientX || e.touches[0].clientX;
+                startY = e.clientY || e.touches[0].clientY;
+                e.preventDefault(); 
+                selectedSourceId = source.id; 
+                renderAll(); // Rerender to highlight selection
+                
+                // Set the initial position to be used for calculation
+                source.initialX = source.x;
+                source.initialY = source.y;
+            };
+            
+            el.addEventListener('mousedown', onMouseDown);
+            el.addEventListener('touchstart', (e) => onMouseDown(e.touches[0]));
+
+
+            const onMouseMove = (e) => {
+                if (!isDragging) return;
+                const clientX = e.clientX || e.touches[0].clientX;
+                const clientY = e.clientY || e.touches[0].clientY;
+
+                const dx = clientX - startX;
+                const dy = clientY - startY;
+
+                let newX = source.initialX + (dx * pxToPercentX);
+                let newY = source.initialY + (dy * pxToPercentY);
+
+                // Update element position directly (real-time)
+                el.style.left = `${newX}%`;
+                el.style.top = `${newY}%`;
+                
+                // Update source object immediately for settings panel and final save
+                source.x = newX;
+                source.y = newY;
+                renderSettingsPanel(source);
+            };
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('touchmove', onMouseMove);
+
+            const onMouseUp = (e) => {
+                if (!isDragging) return;
+
+                isDragging = false;
+                el.style.cursor = 'grab';
+
+                // Final boundary check and save
+                source.x = Math.min(Math.max(-50, source.x), 150);
+                source.y = Math.min(Math.max(-50, source.y), 150);
+                
+                // Save the final state to Firestore
+                saveStateToFirestore(); 
+            };
+
+            document.addEventListener('mouseup', onMouseUp);
+            document.addEventListener('touchend', onMouseUp);
+        }
+        
+        /** Implements the resizing logic (real-time resizing). */
+        function makeResizable(resizer, source, previewRect) {
+            let isResizing = false;
+            let startX, startY, startW, startH;
+            
+            const pxToPercentX = 100 / previewRect.width;
+            const pxToPercentY = 100 / previewRect.height;
+
+            const onMouseDown = (e) => {
+                if (source.locked) return;
+                isResizing = true;
+                e.stopPropagation(); 
+                startX = e.clientX || e.touches[0].clientX;
+                startY = e.clientY || e.touches[0].clientY;
+                startW = source.w;
+                startH = source.h;
+                e.preventDefault(); 
+            };
+            
+            resizer.addEventListener('mousedown', onMouseDown);
+            resizer.addEventListener('touchstart', onMouseDown);
+
+            const onMouseMove = (e) => {
+                if (!isResizing) return;
+                
+                const clientX = e.clientX || e.touches[0].clientX;
+                const clientY = e.clientY || e.touches[0].clientY;
+
+                const dx = clientX - startX;
+                const dy = clientY - startY;
+
+                let newW = startW + (dx * pxToPercentX);
+                let newH = startH + (dy * pxToPercentY);
+                
+                newW = Math.max(1, newW); 
+                newH = Math.max(1, newH);
+
+                // Update source object and element style immediately (real-time)
+                source.w = newW; 
+                source.h = newH;
+                
+                const elementToResize = document.getElementById(`preview-item-${source.id}`);
+                elementToResize.style.width = `${newW}%`;
+                elementToResize.style.height = `${newH}%`;
+
+                renderSettingsPanel(source); // Update size display
+            };
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('touchmove', onMouseMove);
+
+            const onMouseUp = () => {
+                if (!isResizing) return;
+                isResizing = false;
+
+                // Save the final state to Firestore
+                saveStateToFirestore();
+            };
+
+            document.addEventListener('mouseup', onMouseUp);
+            document.addEventListener('touchend', onMouseUp);
+        }
+
+
+        // --- Initialization ---
+        
+        window.onload = () => {
+            initFirebase();
+            window.addEventListener('resize', renderAll);
+        };
+    </script>
+</body>
+</html>
